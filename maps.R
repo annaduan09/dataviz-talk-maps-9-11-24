@@ -13,6 +13,25 @@ library(conflicted) #manage package conflicts
 conflict_prefer(dplyr::select)
 conflicts_prefer(dplyr::filter)
 
+# Geometries
+# Tract geometries
+phila_bounds <- tracts(state = '42', county = '101', year = 2023) %>% #PA FIPS = 42, Philadelphia FIPS = 101
+  erase_water() %>% #great tigris package feature for clipping water features
+  st_transform("EPSG:2272") %>%
+  st_union() %>%
+  st_as_sf()
+
+## Basemap 
+basemap <- states(cb = TRUE) %>% 
+  st_transform("EPSG:2272") %>%
+  filter(NAME %in% c("New Jersey", "Pennsylvania")) %>%
+  st_crop(st_buffer(census, 1000)) %>% #buffer around tracts, then crop NJ and PA for basemap
+  erase_water() 
+
+## Background rectangle
+water_rect <- st_as_sfc(st_bbox(basemap)) %>%
+  st_as_sf() %>%
+  st_transform("EPSG:2272")
 
 #### 2 DATA PROCESSING #### 
 
@@ -95,17 +114,18 @@ shootings <- st_read("https://phl.carto.com/api/v2/sql?q=SELECT+*+FROM+shootings
 ##### Amenities #####
 # Source: Yelp API, Philly Parks and Rec via OpenDataPhilly
 # Link: Yelp API workflow notebook (in this repo), https://metadata.phila.gov/#home/datasetdetails/5dc1aeb93741fa001504b10b/representationdetails/5dc1aeb93741fa001504b10f/
-# Kids activities
-kids_activities <- st_read("data/kids_activities.geojson") %>%
+# Grocery
+grocery <- st_read("data/grocery.geojson") %>%
   select() %>%
   st_transform("EPSG:2272") %>%
-  st_crop(census)
+  st_intersection(phila_bounds) # because yelp returns data outside the city sometimes
 
 # Restaurants
 restaurants <- st_read("data/restaurants.geojson") %>%
   select() %>%
   st_transform("EPSG:2272") %>%
-  st_crop(census)
+  st_crop(census) %>%
+  st_intersection(phila_bounds)
 
 # Parks 
 parks <- st_read("https://opendata.arcgis.com/datasets/d52445160ab14380a673e5849203eb64_0.geojson") %>%
@@ -144,11 +164,6 @@ vouchers <- st_read("data/vouchers_2023.csv") %>%
   summarise(vouchers = n())
 
 #### 3 MAPPING PREP ####
-# Tract geometries
-phila_bounds <- tracts(state = '42', county = '101', year = 2023) %>% #PA FIPS = 42, Philadelphia FIPS = 101
-  erase_water() %>% #great tigris package feature for clipping water features
-  st_transform("ESPG:2272")
-
 # rent limits
 rent_limits <- zctas(year = 2020) %>% #PA FIPS = 42
   filter(substr(ZCTA5CE20, 1, 3) == 191) %>% #Philadelphia ZIPs start with 191
@@ -168,26 +183,17 @@ voucher_hh <- vouchers %>%
 # relevel safmr_label
 rent_limits$safmr_label <- factor(rent_limits$safmr_label, levels = c("Basic", "Traditional", "Mid Range", "Opportunity", "High Opportunity"))
 
-## Basemap 
-basemap <- states(cb = TRUE) %>% 
-  st_transform("EPSG:2272") %>%
-  filter(NAME %in% c("New Jersey", "Pennsylvania")) %>%
-  st_crop(st_buffer(census, 1000)) %>% #buffer around tracts, then crop NJ and PA for basemap
-  erase_water() 
-
-## Background rectangle
-water_rect <- st_as_sfc(st_bbox(basemap)) %>%
-  st_as_sf() %>%
-  st_transform("EPSG:2272")
-
 #### 4 MAPPING ####
 ##### Shootings #####
 ggplot() +
   geom_sf(data = water_rect, color = "transparent", fill = "lightblue2") +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, fill = "gray85", color = "gray90") +
-  geom_sf(data = shootings, aes(color = "1 Shooting Victim"), alpha = 0.5, size = 2) +
+  geom_sf(data = shootings, aes(color = "1 Shooting Victim"), alpha = 0.4) +
   scale_color_manual(name = "", values = "orange") + 
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         text = element_text(color = "gray40"))
@@ -201,8 +207,11 @@ ggplot() +
   geom_sf(data = water_rect, color = "transparent", fill = "lightblue2") +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, fill = "gray85", color = "gray90") +
-  geom_sf(data = restaurants, aes(color = "1 restaurant"), alpha = 0.3, size = 2) +
+  geom_sf(data = restaurants, aes(color = "1 restaurant"), alpha = 0.4) +
   scale_color_manual(name = "", values = "darkcyan") + 
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         text = element_text(color = "gray40"))
@@ -210,18 +219,21 @@ ggplot() +
 ggsave("restaurant_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 
 
-# Kids activities
+# Grocery
 ggplot() +
   geom_sf(data = water_rect, color = "transparent", fill = "lightblue2") +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, fill = "gray85", color = "gray90") +
-  geom_sf(data = kids_activities, aes(color = "1 venue"), alpha = 0.3, size = 1) +
-  scale_color_manual(name = "", values = "salmon") + 
+  geom_sf(data = grocery, aes(color = "1 store"), alpha = 0.4) +
+  scale_color_manual(name = "", values = "darkcyan") + 
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         text = element_text(color = "gray40"))
 
-ggsave("kids_activities_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
+ggsave("grocery_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 
 # Parks
 ggplot() +
@@ -230,6 +242,9 @@ ggplot() +
   geom_sf(data = census, fill = "gray85", color = "gray90") +
   geom_sf(data = parks, aes(fill = "green space"), color = "transparent") +
   scale_fill_manual(name = "", values = "olivedrab") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         text = element_text(color = "gray40"))
@@ -246,11 +261,14 @@ ggplot() +
                       breaks = c(20, 40, 60),
                       labels = c("20%", "40%", "60%"),
                       direction = 1,
-                      na.value = "gray95") +
+                      na.value = "gray85") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   labs(fill = "Percent below\npoverty line") +
   theme_void() +
-  theme(legend.position = c(0.7, 0.1),
-        legend.direction = "horizontal")
+  theme(legend.position = c(0.8, 0.2),
+        text = element_text(color = "gray40"))
 
 ggsave("poverty_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 
@@ -260,14 +278,17 @@ ggplot() +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, aes(fill = unemployed_pct*100), color = "transparent") +
   scale_fill_distiller(palette = 'YlOrBr',
-                      breaks = c(3, 6, 9, 12),
-                      labels = c("3%", "6%", "9%", "12%"),
+                      breaks = c(4, 8, 12),
+                      labels = c("4%", "8%", "12%"),
                       direction = 1,
-                      na.value = "gray95") +
-  labs(fill = "Percent unemployed") +
+                      na.value = "gray85") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
+  labs(fill = "Percent\nunemployed") +
   theme_void() +
-  theme(legend.position = c(0.7, 0.1),
-        legend.direction = "horizontal")
+  theme(legend.position = c(0.8, 0.2),
+        text = element_text(color = "gray40"))
 
 ggsave("unemployment_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 
@@ -277,14 +298,17 @@ ggplot() +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, aes(fill = medhhinc), color = "transparent") +
   scale_fill_distiller(palette = 'YlGnBu',
-                      breaks = c(40000, 80000,  120000, 160000),
-                      labels = c("$40k", "$80k", "$120k", "$160k"),
+                      breaks = c(50000,  100000, 150000),
+                      labels = c("$50k", "$100k", "$150k"),
                       direction = 1,
-                      na.value="gray95") +
-  labs(fill = "Household Income ($)") +
+                      na.value="gray85") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
+  labs(fill = "Med. Household\nIncome ($)") +
   theme_void() +
-  theme(legend.position = c(0.7, 0.1),
-        legend.direction = "horizontal")
+  theme(legend.position = c(0.8, 0.2),
+        text = element_text(color = "gray40"))
 
 ggsave("income_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 
@@ -293,14 +317,16 @@ ggsave("income_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
 ggplot() +
   geom_sf(data = water_rect, color = "transparent", fill = "lightblue2") +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
-  geom_sf(data = rent_limits %>% filter(!is.na(cost_2br)), aes(fill = as.factor(cost_2br)), color = "gray95") +
+  geom_sf(data = rent_limits %>% filter(!is.na(cost_2br)), aes(fill = as.factor(cost_2br)), color = "gray90") +
   scale_fill_brewer(palette = 'YlGnBu',
                     labels = c("$1,476", "$1,764", "$2,124", "$2,580", "$2,820"),
                     direction = 1) +
-  labs(fill = "2-bedroom\nvoucher limit") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
+  labs(fill = "2 bedroom limit") +
   theme_void() +
-  theme(legend.position = c(0.8, 0.2),
-        legend.direction = "vertical",
+  theme(legend.position = c(0.8, 0.25),
         text = element_text(color = "gray40"))
 
 ggsave("rent_limits_map.png", last_plot(), width = 8, height = 8, dpi = 'retina')
@@ -310,8 +336,11 @@ ggplot() +
   geom_sf(data = water_rect, color = "transparent", fill = "lightblue2") +
   geom_sf(data = basemap, fill = "gray95", color = "gray90") +
   geom_sf(data = census, fill = "gray85", color = "gray90") +
-  geom_sf(data = rent_limits %>% filter(safmr %in% c(4, 5)), aes(fill = "Opportunity ZIPs"), color = "transparent") +
+  geom_sf(data = rent_limits %>% filter(safmr %in% c(4, 5)), aes(fill = "Opportunity ZIP"), color = "transparent") +
   scale_fill_manual(values = "darkcyan", name = "") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         legend.direction = "vertical",
@@ -327,7 +356,10 @@ ggplot() +
   scale_fill_distiller(palette = 'YlGnBu',
                     direction = 1,
                     na.value = "gray85") +
-  labs(fill = "Voucher\nHouseholds") +
+  annotate("text", x = 2700000, y = 284000, label = "Elkins Park", size = 3, color = "gray85") +
+  annotate("text", x = 2715000, y = 233000, label = "Camden", size = 3, color = "gray85") +
+  annotate("text", x = 2670000, y = 259000, label = "Bala Cynwyd", size = 3, color = "gray85") +
+  labs(fill = "Households\nper tract") +
   theme_void() +
   theme(legend.position = c(0.8, 0.2),
         legend.direction = "vertical",
